@@ -2205,9 +2205,10 @@ public class InAppWebView: WKWebView, UIScrollViewDelegate, WKUIDelegate, WKNavi
         channel?.invokeMethod("onCloseWindow", arguments: arguments)
     }
     
-    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {        
+        webView.reload()
         onWebContentProcessDidTerminate()
-    }
+     }
     
     public func webView(_ webView: WKWebView,
                         didCommit navigation: WKNavigation!) {
