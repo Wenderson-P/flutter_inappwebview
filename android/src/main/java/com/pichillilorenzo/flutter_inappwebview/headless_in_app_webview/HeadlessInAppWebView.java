@@ -9,21 +9,22 @@ import androidx.annotation.Nullable;
 
 import com.pichillilorenzo.flutter_inappwebview.InAppWebViewFlutterPlugin;
 import com.pichillilorenzo.flutter_inappwebview.Util;
-import com.pichillilorenzo.flutter_inappwebview.in_app_webview.FlutterWebView;
+import com.pichillilorenzo.flutter_inappwebview.types.Disposable;
 import com.pichillilorenzo.flutter_inappwebview.types.Size2D;
+import com.pichillilorenzo.flutter_inappwebview.webview.in_app_webview.FlutterWebView;
 
-import java.util.HashMap;
 import java.util.Map;
 
-import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 
-public class HeadlessInAppWebView implements MethodChannel.MethodCallHandler {
-
+public class HeadlessInAppWebView implements Disposable {
   protected static final String LOG_TAG = "HeadlessInAppWebView";
+  public static final String METHOD_CHANNEL_NAME_PREFIX = "com.pichillilorenzo/flutter_headless_inappwebview_";
+  
   @NonNull
   public final String id;
-  public final MethodChannel channel;
+  @Nullable
+  public HeadlessWebViewChannelDelegate channelDelegate;
   @Nullable
   public FlutterWebView flutterWebView;
   @Nullable
@@ -33,43 +34,29 @@ public class HeadlessInAppWebView implements MethodChannel.MethodCallHandler {
     this.id = id;
     this.plugin = plugin;
     this.flutterWebView = flutterWebView;
-    this.channel = new MethodChannel(plugin.messenger, "com.pichillilorenzo/flutter_headless_inappwebview_" + id);
-    channel.setMethodCallHandler(this);
-  }
-
-  @Override
-  public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
-    switch (call.method) {
-      case "dispose":
-        dispose();
-        result.success(true);
-        break;
-      case "setSize":
-        {
-          Map<String, Object> sizeMap = (Map<String, Object>) call.argument("size");
-          Size2D size = Size2D.fromMap(sizeMap);
-          if (size != null)
-            setSize(size);
-        }
-        result.success(true);
-        break;
-      case "getSize":
-        {
-          Size2D size = getSize();
-          result.success(size != null ? size.toMap() : null);
-        }
-        break;
-      default:
-        result.notImplemented();
-    }
+    final MethodChannel channel = new MethodChannel(plugin.messenger, METHOD_CHANNEL_NAME_PREFIX + id);
+    this.channelDelegate = new HeadlessWebViewChannelDelegate(this, channel);
   }
 
   public void onWebViewCreated() {
-    Map<String, Object> obj = new HashMap<>();
-    channel.invokeMethod("onWebViewCreated", obj);
+    if (channelDelegate != null) {
+      channelDelegate.onWebViewCreated();
+    }
   }
 
   public void prepare(Map<String, Object> params) {
+    if (flutterWebView != null) {
+      View view = flutterWebView.getView();
+      if (view != null) {
+        final Map<String, Object> initialSize = (Map<String, Object>) params.get("initialSize");
+        Size2D size = Size2D.fromMap(initialSize);
+        if (size == null) {
+          size = new Size2D(-1, -1);
+        }
+        setSize(size);
+        view.setVisibility(View.INVISIBLE);
+      }
+    }
     if (plugin != null && plugin.activity != null) {
       // Add the headless WebView to the view hierarchy.
       // This way is also possible to take screenshots.
@@ -78,16 +65,10 @@ public class HeadlessInAppWebView implements MethodChannel.MethodCallHandler {
         ViewGroup mainView = (ViewGroup) (contentView).getChildAt(0);
         if (mainView != null && flutterWebView != null) {
           View view = flutterWebView.getView();
-          final Map<String, Object> initialSize = (Map<String, Object>) params.get("initialSize");
-          Size2D size = Size2D.fromMap(initialSize);
-          if (size != null) {
-            setSize(size);
-          } else {
-            view.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+          if (view != null) {
+            mainView.addView(view, 0);
           }
-          mainView.addView(view, 0);
-          view.setVisibility(View.INVISIBLE);
-        }
+        } 
       }
     }
   }
@@ -95,8 +76,13 @@ public class HeadlessInAppWebView implements MethodChannel.MethodCallHandler {
   public void setSize(@NonNull Size2D size) {
     if (flutterWebView != null && flutterWebView.webView != null) {
       View view = flutterWebView.getView();
-      float scale = Util.getPixelDensity(view.getContext());
-      view.setLayoutParams(new FrameLayout.LayoutParams((int) (size.getWidth() * scale), (int) (size.getHeight() * scale)));
+      if (view != null) {
+        float scale = Util.getPixelDensity(view.getContext());
+        Size2D fullscreenSize = Util.getFullscreenSize(view.getContext());
+        int width = (int) (size.getWidth() == -1 ? fullscreenSize.getWidth() : (size.getWidth() * scale));
+        int height = (int) (size.getWidth() == -1 ? fullscreenSize.getHeight() : (size.getHeight() * scale));
+        view.setLayoutParams(new FrameLayout.LayoutParams(width, height));
+      }
     }
   }
 
@@ -104,24 +90,58 @@ public class HeadlessInAppWebView implements MethodChannel.MethodCallHandler {
   public Size2D getSize() {
     if (flutterWebView != null && flutterWebView.webView != null) {
       View view = flutterWebView.getView();
-      float scale = Util.getPixelDensity(view.getContext());
-      ViewGroup.LayoutParams layoutParams = view.getLayoutParams();
-      return new Size2D(layoutParams.width / scale, layoutParams.height / scale);
+      if (view != null) {
+        float scale = Util.getPixelDensity(view.getContext());
+        Size2D fullscreenSize = Util.getFullscreenSize(view.getContext());
+        ViewGroup.LayoutParams layoutParams = view.getLayoutParams();
+        return new Size2D(
+                fullscreenSize.getWidth() == layoutParams.width ? layoutParams.width : (layoutParams.width / scale),
+                fullscreenSize.getHeight() == layoutParams.height ? layoutParams.height : (layoutParams.height / scale)
+        );
+      }
     }
     return null;
   }
 
+  @Nullable
+  public FlutterWebView disposeAndGetFlutterWebView() {
+    FlutterWebView newFlutterWebView = flutterWebView;
+    if (flutterWebView != null) {
+      View view = flutterWebView.getView();
+      if (view != null) {
+        // restore WebView layout params and visibility
+        view.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        view.setVisibility(View.VISIBLE);
+        // remove from parent
+        ViewGroup parent = (ViewGroup) view.getParent();
+        if (parent != null) {
+          parent.removeView(view);
+        }
+      }
+      // set to null to avoid to be disposed before calling "dispose()"
+      flutterWebView = null;
+      dispose();
+    }
+    return newFlutterWebView;
+  }
+
   public void dispose() {
-    channel.setMethodCallHandler(null);
+    if (channelDelegate != null) {
+      channelDelegate.dispose();
+      channelDelegate = null;
+    }
     if (HeadlessInAppWebViewManager.webViews.containsKey(id)) {
       HeadlessInAppWebViewManager.webViews.put(id, null);
     }
     if (plugin != null && plugin.activity != null) {
-      ViewGroup contentView = (ViewGroup) plugin.activity.findViewById(android.R.id.content);
+      ViewGroup contentView = plugin.activity.findViewById(android.R.id.content);
       if (contentView != null) {
         ViewGroup mainView = (ViewGroup) (contentView).getChildAt(0);
         if (mainView != null && flutterWebView != null) {
-          mainView.removeView(flutterWebView.getView());
+          View view = flutterWebView.getView();
+          if (view != null) {
+            mainView.removeView(flutterWebView.getView());
+          }
         }
       }
     }

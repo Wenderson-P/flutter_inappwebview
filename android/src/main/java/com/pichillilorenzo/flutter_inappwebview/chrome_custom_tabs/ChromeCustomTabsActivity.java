@@ -9,7 +9,10 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.widget.RemoteViews;
 
+import androidx.annotation.CallSuper;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.browser.customtabs.CustomTabColorSchemeParams;
 import androidx.browser.customtabs.CustomTabsCallback;
@@ -18,37 +21,52 @@ import androidx.browser.customtabs.CustomTabsService;
 import androidx.browser.customtabs.CustomTabsSession;
 
 import com.pichillilorenzo.flutter_inappwebview.R;
+import com.pichillilorenzo.flutter_inappwebview.types.AndroidResource;
 import com.pichillilorenzo.flutter_inappwebview.types.CustomTabsActionButton;
 import com.pichillilorenzo.flutter_inappwebview.types.CustomTabsMenuItem;
+import com.pichillilorenzo.flutter_inappwebview.types.CustomTabsSecondaryToolbar;
+import com.pichillilorenzo.flutter_inappwebview.types.Disposable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 
-public class ChromeCustomTabsActivity extends Activity implements MethodChannel.MethodCallHandler {
-
+public class ChromeCustomTabsActivity extends Activity implements Disposable {
   protected static final String LOG_TAG = "CustomTabsActivity";
-  public MethodChannel channel;
+  public static final String METHOD_CHANNEL_NAME_PREFIX = "com.pichillilorenzo/flutter_chromesafaribrowser_";
+  
   public String id;
+  @Nullable
   public CustomTabsIntent.Builder builder;
-  public ChromeCustomTabsOptions options;
+  public ChromeCustomTabsSettings customSettings = new ChromeCustomTabsSettings();
   public CustomTabActivityHelper customTabActivityHelper = new CustomTabActivityHelper();
   @Nullable
   public CustomTabsSession customTabsSession;
   protected final int CHROME_CUSTOM_TAB_REQUEST_CODE = 100;
-  protected boolean onChromeSafariBrowserOpened = false;
-  protected boolean onChromeSafariBrowserCompletedInitialLoad = false;
+  protected boolean onOpened = false;
+  protected boolean onCompletedInitialLoad = false;
   @Nullable
   public ChromeSafariBrowserManager manager;
+  @Nullable
   public String initialUrl;
+  @Nullable
+  public List<String> initialOtherLikelyURLs;
+  @Nullable
+  public Map<String, String> initialHeaders;
+  @Nullable
+  public String initialReferrer;
   public List<CustomTabsMenuItem> menuItems = new ArrayList<>();
   @Nullable
   public CustomTabsActionButton actionButton;
+  @Nullable
+  public CustomTabsSecondaryToolbar secondaryToolbar;
+  @Nullable
+  public ChromeCustomTabsChannelDelegate channelDelegate;
 
+  @CallSuper
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
@@ -62,27 +80,36 @@ public class ChromeCustomTabsActivity extends Activity implements MethodChannel.
 
     String managerId = b.getString("managerId");
     manager = ChromeSafariBrowserManager.shared.get(managerId);
-    if (manager == null || manager.plugin == null|| manager.plugin.messenger == null) return;
+    if (manager == null || manager.plugin == null || manager.plugin.messenger == null) return;
 
-    channel = new MethodChannel(manager.plugin.messenger, "com.pichillilorenzo/flutter_chromesafaribrowser_" + id);
-    channel.setMethodCallHandler(this);
+    ChromeSafariBrowserManager.browsers.put(id, this);
+
+    MethodChannel channel = new MethodChannel(manager.plugin.messenger, METHOD_CHANNEL_NAME_PREFIX + id);
+    channelDelegate = new ChromeCustomTabsChannelDelegate(this, channel);
 
     initialUrl = b.getString("url");
+    initialHeaders = (Map<String, String>) b.getSerializable("headers");
+    initialReferrer = b.getString("referrer");
+    initialOtherLikelyURLs = b.getStringArrayList("otherLikelyURLs");
 
-    options = new ChromeCustomTabsOptions();
-    options.parse((Map<String, Object>) b.getSerializable("options"));
+    customSettings = new ChromeCustomTabsSettings();
+    customSettings.parse((HashMap<String, Object>) b.getSerializable("settings"));
     actionButton = CustomTabsActionButton.fromMap((Map<String, Object>) b.getSerializable("actionButton"));
+    secondaryToolbar = CustomTabsSecondaryToolbar.fromMap((Map<String, Object>) b.getSerializable("secondaryToolbar"));
     List<Map<String, Object>> menuItemList = (List<Map<String, Object>>) b.getSerializable("menuItemList");
     for (Map<String, Object> menuItem : menuItemList) {
       menuItems.add(CustomTabsMenuItem.fromMap(menuItem));
     }
-    
+
     final ChromeCustomTabsActivity chromeCustomTabsActivity = this;
 
     customTabActivityHelper.setConnectionCallback(new CustomTabActivityHelper.ConnectionCallback() {
       @Override
       public void onCustomTabsConnected() {
         customTabsConnected();
+        if (channelDelegate != null) {
+          channelDelegate.onServiceConnected();
+        }
       }
 
       @Override
@@ -95,99 +122,120 @@ public class ChromeCustomTabsActivity extends Activity implements MethodChannel.
     customTabActivityHelper.setCustomTabsCallback(new CustomTabsCallback() {
       @Override
       public void onNavigationEvent(int navigationEvent, Bundle extras) {
-        if (navigationEvent == TAB_SHOWN && !onChromeSafariBrowserOpened) {
-          onChromeSafariBrowserOpened = true;
-          Map<String, Object> obj = new HashMap<>();
-          channel.invokeMethod("onChromeSafariBrowserOpened", obj);
+        if (navigationEvent == TAB_SHOWN && !onOpened) {
+          onOpened = true;
+          if (channelDelegate != null) {
+            channelDelegate.onOpened();
+          }
         }
 
-        if (navigationEvent == NAVIGATION_FINISHED && !onChromeSafariBrowserCompletedInitialLoad) {
-          onChromeSafariBrowserCompletedInitialLoad = true;
-          Map<String, Object> obj = new HashMap<>();
-          channel.invokeMethod("onChromeSafariBrowserCompletedInitialLoad", obj);
+        if (navigationEvent == NAVIGATION_FINISHED && !onCompletedInitialLoad) {
+          onCompletedInitialLoad = true;
+          if (channelDelegate != null) {
+            channelDelegate.onCompletedInitialLoad();
+          }
+        }
+
+        if (channelDelegate != null) {
+          channelDelegate.onNavigationEvent(navigationEvent);
         }
       }
 
       @Override
-      public void extraCallback(String callbackName, Bundle args) {
-
-      }
+      public void extraCallback(@NonNull String callbackName, Bundle args) {}
 
       @Override
-      public void onMessageChannelReady(Bundle extras) {
-
-      }
+      public void onMessageChannelReady(Bundle extras) {}
 
       @Override
-      public void onPostMessage(String message, Bundle extras) {
-
-      }
+      public void onPostMessage(@NonNull String message, Bundle extras) {}
 
       @Override
-      public void onRelationshipValidationResult(@CustomTabsService.Relation int relation, Uri requestedOrigin,
+      public void onRelationshipValidationResult(@CustomTabsService.Relation int relation,
+                                                 @NonNull Uri requestedOrigin,
                                                  boolean result, Bundle extras) {
-
+        if (channelDelegate != null) {
+          channelDelegate.onRelationshipValidationResult(relation, requestedOrigin, result);
+        }
       }
     });
   }
 
-  @Override
-  public void onMethodCall(final MethodCall call, final MethodChannel.Result result) {
-    switch (call.method) {
-      case "close":
-        this.onStop();
-        this.onDestroy();
-        this.close();
-
-        if (manager != null && manager.plugin != null && manager.plugin.activity != null) {
-          // https://stackoverflow.com/a/41596629/4637638
-          Intent myIntent = new Intent(manager.plugin.activity, manager.plugin.activity.getClass());
-          myIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-          myIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-          manager.plugin.activity.startActivity(myIntent);
-        }
-
-        dispose();
-        
-        result.success(true);
-        break;
-      default:
-        result.notImplemented();
-    }
-  }
-
-  public void customTabsConnected() {
-    customTabsSession = customTabActivityHelper.getSession();
-    Uri uri = Uri.parse(initialUrl);
-    customTabActivityHelper.mayLaunchUrl(uri, null, null);
-
+  public void launchUrl(@NonNull String url,
+                        @Nullable Map<String, String> headers,
+                        @Nullable String referrer,
+                        @Nullable List<String> otherLikelyURLs) {
+    mayLaunchUrl(url, otherLikelyURLs);
     builder = new CustomTabsIntent.Builder(customTabsSession);
     prepareCustomTabs();
 
     CustomTabsIntent customTabsIntent = builder.build();
     prepareCustomTabsIntent(customTabsIntent);
 
-    CustomTabActivityHelper.openCustomTab(this, customTabsIntent, uri, CHROME_CUSTOM_TAB_REQUEST_CODE);
+    CustomTabActivityHelper.openCustomTab(this, customTabsIntent, Uri.parse(url), headers,
+            referrer != null ? Uri.parse(referrer) : null, CHROME_CUSTOM_TAB_REQUEST_CODE);
+  }
+
+  public boolean mayLaunchUrl(@Nullable String url, @Nullable List<String> otherLikelyURLs) {
+    Uri uri = url != null ? Uri.parse(url) : null;
+
+    List<Bundle> bundleOtherLikelyURLs = new ArrayList<>();
+    if (otherLikelyURLs != null) {
+      Bundle bundleOtherLikelyURL = new Bundle();
+      for (String otherLikelyURL : otherLikelyURLs) {
+        bundleOtherLikelyURL.putString(CustomTabsService.KEY_URL, otherLikelyURL);
+      }
+    }
+    return customTabActivityHelper.mayLaunchUrl(uri, null, bundleOtherLikelyURLs);
+  }
+
+  public void customTabsConnected() {
+    customTabsSession = customTabActivityHelper.getSession();
+    if (initialUrl != null) {
+      launchUrl(initialUrl, initialHeaders, initialReferrer, initialOtherLikelyURLs);
+    }
   }
 
   private void prepareCustomTabs() {
-    if (options.addDefaultShareMenuItem != null) {
-      builder.setShareState(options.addDefaultShareMenuItem ?
+    if (builder == null) {
+      return;
+    }
+
+    if (customSettings.addDefaultShareMenuItem != null) {
+      builder.setShareState(customSettings.addDefaultShareMenuItem ?
               CustomTabsIntent.SHARE_STATE_ON : CustomTabsIntent.SHARE_STATE_OFF);
     } else {
-      builder.setShareState(options.shareState);
+      builder.setShareState(customSettings.shareState);
     }
 
-    if (options.toolbarBackgroundColor != null && !options.toolbarBackgroundColor.isEmpty()) {
-      CustomTabColorSchemeParams.Builder defaultColorSchemeBuilder = new CustomTabColorSchemeParams.Builder();
-      builder.setDefaultColorSchemeParams(defaultColorSchemeBuilder
-              .setToolbarColor(Color.parseColor(options.toolbarBackgroundColor))
-              .build());
+    CustomTabColorSchemeParams.Builder defaultColorSchemeBuilder = new CustomTabColorSchemeParams.Builder();
+    if (customSettings.toolbarBackgroundColor != null && !customSettings.toolbarBackgroundColor.isEmpty()) {
+      defaultColorSchemeBuilder.setToolbarColor(Color.parseColor(customSettings.toolbarBackgroundColor));
     }
+    if (customSettings.navigationBarColor != null && !customSettings.navigationBarColor.isEmpty()) {
+      defaultColorSchemeBuilder.setNavigationBarColor(Color.parseColor(customSettings.navigationBarColor));
+    }
+    if (customSettings.navigationBarDividerColor != null && !customSettings.navigationBarDividerColor.isEmpty()) {
+      defaultColorSchemeBuilder.setNavigationBarDividerColor(Color.parseColor(customSettings.navigationBarDividerColor));
+    }
+    if (customSettings.secondaryToolbarColor != null && !customSettings.secondaryToolbarColor.isEmpty()) {
+      defaultColorSchemeBuilder.setSecondaryToolbarColor(Color.parseColor(customSettings.secondaryToolbarColor));
+    }
+    builder.setDefaultColorSchemeParams(defaultColorSchemeBuilder.build());
 
-    builder.setShowTitle(options.showTitle);
-    builder.setUrlBarHidingEnabled(options.enableUrlBarHiding);
-    builder.setInstantAppsEnabled(options.instantAppsEnabled);
+    builder.setShowTitle(customSettings.showTitle);
+    builder.setUrlBarHidingEnabled(customSettings.enableUrlBarHiding);
+    builder.setInstantAppsEnabled(customSettings.instantAppsEnabled);
+    if (customSettings.startAnimations.size() == 2) {
+      builder.setStartAnimations(this,
+              customSettings.startAnimations.get(0).getIdentifier(this),
+              customSettings.startAnimations.get(1).getIdentifier(this));
+    }
+    if (customSettings.exitAnimations.size() == 2) {
+      builder.setExitAnimations(this,
+              customSettings.exitAnimations.get(0).getIdentifier(this),
+              customSettings.exitAnimations.get(1).getIdentifier(this));
+    }
 
     for (CustomTabsMenuItem menuItem : menuItems) {
       builder.addMenuItem(menuItem.getLabel(), 
@@ -205,16 +253,75 @@ public class ChromeCustomTabsActivity extends Activity implements MethodChannel.
               createPendingIntent(actionButton.getId()),
               actionButton.isShouldTint());
     }
+
+    if (secondaryToolbar != null) {
+      AndroidResource layout = secondaryToolbar.getLayout();
+      RemoteViews remoteViews = new RemoteViews(layout.getDefPackage(), layout.getIdentifier(this));
+      int[] clickableIDs = new int[secondaryToolbar.getClickableIDs().size()];
+      for (int i = 0, length = secondaryToolbar.getClickableIDs().size(); i < length; i++) {
+        AndroidResource clickableID = secondaryToolbar.getClickableIDs().get(i);
+        clickableIDs[i] = clickableID.getIdentifier(this);
+      }
+      builder.setSecondaryToolbarViews(remoteViews, clickableIDs, getSecondaryToolbarOnClickPendingIntent());
+    }
+  }
+
+  public PendingIntent getSecondaryToolbarOnClickPendingIntent() {
+    Intent broadcastIntent = new Intent(this, ActionBroadcastReceiver.class);
+
+    Bundle extras = new Bundle();
+    extras.putString(ActionBroadcastReceiver.KEY_ACTION_VIEW_ID, id);
+    broadcastIntent.putExtras(extras);
+
+    if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      return PendingIntent.getBroadcast(
+              this, 0, broadcastIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+    } else {
+      return PendingIntent.getBroadcast(
+              this, 0, broadcastIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+    }
   }
 
   private void prepareCustomTabsIntent(CustomTabsIntent customTabsIntent) {
-    if (options.packageName != null)
-      customTabsIntent.intent.setPackage(options.packageName);
+    if (customSettings.packageName != null)
+      customTabsIntent.intent.setPackage(customSettings.packageName);
     else
       customTabsIntent.intent.setPackage(CustomTabsHelper.getPackageNameToUse(this));
 
-    if (options.keepAliveEnabled)
+    if (customSettings.keepAliveEnabled)
       CustomTabsHelper.addKeepAliveExtra(this, customTabsIntent.intent);
+
+    if (customSettings.alwaysUseBrowserUI)
+      CustomTabsIntent.setAlwaysUseBrowserUI(customTabsIntent.intent);
+  }
+
+  public void updateActionButton(@NonNull byte[] icon, @NonNull String description) {
+    if (customTabsSession == null || actionButton == null) {
+      return;
+    }
+    BitmapFactory.Options bitmapOptions = new BitmapFactory.Options();
+    bitmapOptions.inMutable = true;
+    Bitmap bmp = BitmapFactory.decodeByteArray(
+            icon, 0, icon.length, bitmapOptions
+    );
+    customTabsSession.setActionButton(bmp, description);
+    actionButton.setIcon(icon);
+    actionButton.setDescription(description);
+  }
+
+  public void updateSecondaryToolbar(CustomTabsSecondaryToolbar secondaryToolbar) {
+    if (customTabsSession == null) {
+      return;
+    }
+    AndroidResource layout = secondaryToolbar.getLayout();
+    RemoteViews remoteViews = new RemoteViews(layout.getDefPackage(), layout.getIdentifier(this));
+    int[] clickableIDs = new int[secondaryToolbar.getClickableIDs().size()];
+    for (int i = 0, length = secondaryToolbar.getClickableIDs().size(); i < length; i++) {
+      AndroidResource clickableID = secondaryToolbar.getClickableIDs().get(i);
+      clickableIDs[i] = clickableID.getIdentifier(this);
+    }
+    customTabsSession.setSecondaryToolbarViews(remoteViews, clickableIDs, getSecondaryToolbarOnClickPendingIntent());
+    this.secondaryToolbar = secondaryToolbar;
   }
 
   @Override
@@ -227,6 +334,11 @@ public class ChromeCustomTabsActivity extends Activity implements MethodChannel.
   protected void onStop() {
     super.onStop();
     customTabActivityHelper.unbindCustomTabsService(this);
+  }
+
+  @Override
+  public void onDestroy() {
+    super.onDestroy();
   }
 
   @Override
@@ -243,7 +355,6 @@ public class ChromeCustomTabsActivity extends Activity implements MethodChannel.
     Bundle extras = new Bundle();
     extras.putInt(ActionBroadcastReceiver.KEY_ACTION_ID, actionSourceId);
     extras.putString(ActionBroadcastReceiver.KEY_ACTION_VIEW_ID, id);
-    extras.putString(ActionBroadcastReceiver.CHROME_MANAGER_ID, manager.id);
     actionIntent.putExtras(extras);
 
     if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -255,15 +366,27 @@ public class ChromeCustomTabsActivity extends Activity implements MethodChannel.
     }
   }
 
+  @Override
   public void dispose() {
-    channel.setMethodCallHandler(null);
+    onStop();
+    onDestroy();
+    if (channelDelegate != null) {
+      channelDelegate.dispose();
+      channelDelegate = null;
+    }
+    if (ChromeSafariBrowserManager.browsers.containsKey(id)) {
+      ChromeSafariBrowserManager.browsers.put(id, null);
+    }
     manager = null;
   }
 
   public void close() {
+    onStop();
+    onDestroy();
     customTabsSession = null;
     finish();
-    Map<String, Object> obj = new HashMap<>();
-    channel.invokeMethod("onChromeSafariBrowserClosed", obj);
+    if (channelDelegate != null) {
+      channelDelegate.onClosed();
+    }
   }
 }

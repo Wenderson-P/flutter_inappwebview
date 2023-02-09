@@ -1,7 +1,33 @@
 import 'dart:math';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import 'debug_logging_settings.dart';
+
+class Util {
+  static bool get isWeb => kIsWeb;
+
+  static bool get isAndroid =>
+      !isWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  static bool get isIOS =>
+      !isWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+  static bool get isMacOS =>
+      !isWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
+  static bool get isWindows =>
+      !isWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+  static bool get isLinux =>
+      !isWeb && defaultTargetPlatform == TargetPlatform.linux;
+
+  static bool get isFuchsia =>
+      !isWeb && defaultTargetPlatform == TargetPlatform.fuchsia;
+}
 
 class IdGenerator {
   static int _count = 0;
@@ -500,5 +526,53 @@ extension MapSize on Size {
 
   Map<String, double> toMap() {
     return {'width': width, 'height': height};
+  }
+}
+
+extension MapEdgeInsets on EdgeInsets {
+  static EdgeInsets? fromMap(Map<String, dynamic>? map) {
+    if (map == null) {
+      return null;
+    }
+    return EdgeInsets.fromLTRB(
+        map['left'], map['top'], map['right'], map['bottom']);
+  }
+
+  Map<String, double> toJson() {
+    return toMap();
+  }
+
+  Map<String, double> toMap() {
+    return {'top': top, 'right': right, 'bottom': bottom, 'left': left};
+  }
+}
+
+void debugLog(
+    {required DebugLoggingSettings debugLoggingSettings,
+    required String className,
+    required String method,
+    String? name,
+    String? id,
+    dynamic args}) {
+  if (debugLoggingSettings.enabled) {
+    for (var regExp in debugLoggingSettings.excludeFilter) {
+      if (regExp.hasMatch(method)) return;
+    }
+    var maxLogMessageLength = debugLoggingSettings.maxLogMessageLength;
+    String message =
+        "(${Util.isWeb ? 'Web' : defaultTargetPlatform.name}) ${name ?? className}" +
+            (id != null ? ' ID $id' : '') +
+            ' calling "' +
+            method.toString() +
+            '" using ' +
+            args.toString();
+    if (maxLogMessageLength >= 0 && message.length > maxLogMessageLength) {
+      message = message.substring(0, maxLogMessageLength) + '...';
+    }
+    if (!debugLoggingSettings.usePrint) {
+      developer.log(message, name: className);
+    } else {
+      print('[${className}] $message');
+    }
   }
 }

@@ -2,27 +2,33 @@ package com.pichillilorenzo.flutter_inappwebview.content_blocker;
 
 import android.os.Build;
 import android.os.Handler;
-import android.os.Looper;
+import android.text.TextUtils;
 import android.util.Log;
 import android.webkit.WebResourceResponse;
 
-import com.pichillilorenzo.flutter_inappwebview.in_app_webview.InAppWebView;
+import androidx.annotation.Nullable;
+
 import com.pichillilorenzo.flutter_inappwebview.Util;
+import com.pichillilorenzo.flutter_inappwebview.plugin_scripts_js.JavaScriptBridgeJS;
+import com.pichillilorenzo.flutter_inappwebview.types.WebResourceRequestExt;
+import com.pichillilorenzo.flutter_inappwebview.webview.in_app_webview.InAppWebView;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.regex.Matcher;
 
-import okhttp3.Request;
-import okhttp3.Response;
+import javax.net.ssl.SSLHandshakeException;
 
 public class ContentBlockerHandler {
     protected static final String LOG_TAG = "ContentBlockerHandler";
@@ -43,9 +49,14 @@ public class ContentBlockerHandler {
         this.ruleList = newRuleList;
     }
 
-    public WebResourceResponse checkUrl(final InAppWebView webView, String url, ContentBlockerTriggerResourceType responseResourceType) throws URISyntaxException, InterruptedException, MalformedURLException {
-        if (webView.options.contentBlockers == null)
+    @Nullable
+    public WebResourceResponse checkUrl(final InAppWebView webView, WebResourceRequestExt request,
+                                        ContentBlockerTriggerResourceType responseResourceType)
+            throws URISyntaxException, InterruptedException, MalformedURLException {
+        if (webView.customSettings.contentBlockers == null)
             return null;
+
+        String url = request.getUrl();
 
         URI u;
         try {
@@ -146,9 +157,9 @@ public class ContentBlockerHandler {
                         final String cssSelector = action.getSelector();
                         final String jsScript = "(function(d) { " +
                                 "   function hide () { " +
-                                "       if (!d.getElementById('css-display-none-style')) { " +
+                                "       if (!d.getElementById('" + JavaScriptBridgeJS.JAVASCRIPT_BRIDGE_NAME + "-css-display-none-style')) { " +
                                 "           var c = d.createElement('style'); " +
-                                "           c.id = 'css-display-none-style'; " +
+                                "           c.id = '" + JavaScriptBridgeJS.JAVASCRIPT_BRIDGE_NAME + "-css-display-none-style'; " +
                                 "           c.innerHTML = '" + cssSelector + " { display: none !important; }'; " +
                                 "           d.body.appendChild(c); " +
                                 "       }" +
@@ -161,7 +172,7 @@ public class ContentBlockerHandler {
                                 "})(document);";
 
                         final Handler handler = new Handler(webView.getWebViewLooper());
-                        handler.post(new Runnable() {
+                        handler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
@@ -170,41 +181,92 @@ public class ContentBlockerHandler {
                                     webView.loadUrl("javascript:" + jsScript);
                                 }
                             }
-                        });
+                        }, 800);
                         break;
 
                     case MAKE_HTTPS:
                         if (scheme.equals("http") && (port == -1 || port == 80)) {
                             String urlHttps = url.replace("http://", "https://");
 
-                            Request mRequest = new Request.Builder().url(urlHttps).build();
-                            Response response = null;
+                            HttpURLConnection urlConnection = Util.makeHttpRequest(urlHttps, request.getMethod(), request.getHeaders());
+                            if (urlConnection != null) {
+                                try {
+                                    byte[] dataBytes = Util.readAllBytes(urlConnection.getInputStream());
+                                    if (dataBytes == null) {
+                                        return null;
+                                    }
+                                    InputStream dataStream = new ByteArrayInputStream(dataBytes);
 
-                            try {
-                                response = Util.getUnsafeOkHttpClient().newCall(mRequest).execute();
-                                byte[] dataBytes = response.body().bytes();
-                                InputStream dataStream = new ByteArrayInputStream(dataBytes);
+                                    String encoding = urlConnection.getContentEncoding();
+                                    String contentType = urlConnection.getContentType();
+                                    if (contentType == null) {
+                                        contentType = "text/plain";
+                                    } else {
+                                        String[] contentTypeSplitted = contentType.split(";");
+                                        contentType = contentTypeSplitted[0].trim();
+                                        if (encoding == null) {
+                                            encoding = (contentTypeSplitted.length > 1 && contentTypeSplitted[1].contains("charset="))
+                                                    ? contentTypeSplitted[1].replace("charset=", "").trim()
+                                                    : "utf-8";
+                                        }
+                                    }
 
-                                String[] contentTypeSplitted = response.header("content-type", "text/plain").split(";");
-
-                                String contentType = contentTypeSplitted[0].trim();
-                                String encoding = (contentTypeSplitted.length > 1 && contentTypeSplitted[1].contains("charset="))
-                                        ? contentTypeSplitted[1].replace("charset=", "").trim()
-                                        : "utf-8";
-
-                                response.body().close();
-                                response.close();
-
-                                return new WebResourceResponse(contentType, encoding, dataStream);
-
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                                if (response != null) {
-                                    response.body().close();
-                                    response.close();
+                                    String reasonPhrase = urlConnection.getResponseMessage();
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && reasonPhrase != null) {
+                                        Map<String, String> responseHeaders = new HashMap<>();
+                                        for (Map.Entry<String, List<String>> responseHeader : urlConnection.getHeaderFields().entrySet()) {
+                                            responseHeaders.put(responseHeader.getKey(), TextUtils.join(",", responseHeader.getValue()));
+                                        }
+                                        return new WebResourceResponse(contentType,
+                                                encoding,
+                                                urlConnection.getResponseCode(),
+                                                reasonPhrase,
+                                                responseHeaders,
+                                                dataStream);
+                                    } else {
+                                        return new WebResourceResponse(contentType,
+                                                encoding,
+                                                dataStream);
+                                    }
+                                } catch (Exception e) {
+                                    if (!(e instanceof SSLHandshakeException)) {
+                                        e.printStackTrace();
+                                    }
+                                } finally {
+                                    urlConnection.disconnect();
                                 }
-                                Log.e(LOG_TAG, e.getMessage());
                             }
+
+//                            Request mRequest = new Request.Builder().url(urlHttps).build();
+//                            Response response = null;
+//
+//                            try {
+//                                response = Util.getBasicOkHttpClient().newCall(mRequest).execute();
+//                                byte[] dataBytes = response.body().bytes();
+//                                InputStream dataStream = new ByteArrayInputStream(dataBytes);
+//
+//                                String[] contentTypeSplitted = response.header("content-type", "text/plain").split(";");
+//
+//                                String contentType = contentTypeSplitted[0].trim();
+//                                String encoding = (contentTypeSplitted.length > 1 && contentTypeSplitted[1].contains("charset="))
+//                                        ? contentTypeSplitted[1].replace("charset=", "").trim()
+//                                        : "utf-8";
+//
+//                                response.body().close();
+//                                response.close();
+//
+//                                return new WebResourceResponse(contentType, encoding, dataStream);
+//
+//                            } catch (Exception e) {
+//                                if (response != null) {
+//                                    response.body().close();
+//                                    response.close();
+//                                }
+//                                if (!(e instanceof SSLHandshakeException)) {
+//                                    e.printStackTrace();
+//                                    Log.e(LOG_TAG, e.getMessage());
+//                                }
+//                            }
                         }
                         break;
                 }
@@ -212,47 +274,39 @@ public class ContentBlockerHandler {
         }
         return null;
     }
-
-    public WebResourceResponse checkUrl(final InAppWebView webView, String url) throws URISyntaxException, InterruptedException, MalformedURLException {
-        ContentBlockerTriggerResourceType responseResourceType = getResourceTypeFromUrl(url);
-        return checkUrl(webView, url, responseResourceType);
+    
+    @Nullable
+    public WebResourceResponse checkUrl(final InAppWebView webView, WebResourceRequestExt request) throws URISyntaxException, InterruptedException, MalformedURLException {
+        ContentBlockerTriggerResourceType responseResourceType = getResourceTypeFromUrl(request);
+        return checkUrl(webView, request, responseResourceType);
     }
 
-    public WebResourceResponse checkUrl(final InAppWebView webView, String url, String contentType) throws URISyntaxException, InterruptedException, MalformedURLException {
+    @Nullable
+    public WebResourceResponse checkUrl(final InAppWebView webView, WebResourceRequestExt request, String contentType) throws URISyntaxException, InterruptedException, MalformedURLException {
         ContentBlockerTriggerResourceType responseResourceType = getResourceTypeFromContentType(contentType);
-        return checkUrl(webView, url, responseResourceType);
+        return checkUrl(webView, request, responseResourceType);
     }
 
-    public ContentBlockerTriggerResourceType getResourceTypeFromUrl(String url) {
+    public ContentBlockerTriggerResourceType getResourceTypeFromUrl(WebResourceRequestExt request) {
         ContentBlockerTriggerResourceType responseResourceType = ContentBlockerTriggerResourceType.RAW;
+        String url = request.getUrl();
 
         if (url.startsWith("http://") || url.startsWith("https://")) {
             // make an HTTP "HEAD" request to the server for that URL. This will not return the full content of the URL.
-            Request mRequest = new Request.Builder().url(url).head().build();
-            Response response = null;
-            try {
-                response = Util.getUnsafeOkHttpClient().newCall(mRequest).execute();
-
-                if (response.header("content-type") != null) {
-                    String[] contentTypeSplitted = response.header("content-type").split(";");
-
-                    String contentType = contentTypeSplitted[0].trim();
-                    String encoding = (contentTypeSplitted.length > 1 && contentTypeSplitted[1].contains("charset="))
-                            ? contentTypeSplitted[1].replace("charset=", "").trim()
-                            : "utf-8";
-
-                    response.body().close();
-                    response.close();
-                    responseResourceType = getResourceTypeFromContentType(contentType);
+            HttpURLConnection urlConnection = Util.makeHttpRequest(url, "HEAD", request.getHeaders());
+            if (urlConnection != null) {
+                try {
+                    String contentType = urlConnection.getContentType();
+                    if (contentType != null) {
+                        String[] contentTypeSplitted = contentType.split(";");
+                        contentType = contentTypeSplitted[0].trim();
+                        responseResourceType = getResourceTypeFromContentType(contentType);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    urlConnection.disconnect();
                 }
-
-            } catch (Exception e) {
-                if (response != null) {
-                    response.body().close();
-                    response.close();
-                }
-                e.printStackTrace();
-                Log.e(LOG_TAG, e.getMessage());
             }
         }
         return responseResourceType;

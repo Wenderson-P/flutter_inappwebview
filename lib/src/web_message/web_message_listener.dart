@@ -1,9 +1,19 @@
 import 'package:flutter/services.dart';
 import '../in_app_webview/in_app_webview_controller.dart';
-import '../types.dart';
+import '../types/main.dart';
+import '../util.dart';
+import '../web_uri.dart';
 
 ///This listener receives messages sent on the JavaScript object which was injected by [InAppWebViewController.addWebMessageListener].
+///
+///**Supported Platforms/Implementations**:
+///- Android native WebView
+///- iOS
+///- MacOS
 class WebMessageListener {
+  ///Message Listener ID used internally.
+  late final String id;
+
   ///The name for the injected JavaScript object.
   final String jsObjectName;
 
@@ -30,16 +40,24 @@ class WebMessageListener {
       {required this.jsObjectName,
       Set<String>? allowedOriginRules,
       this.onPostMessage}) {
+    this.id = IdGenerator.generate();
     this.allowedOriginRules =
         allowedOriginRules != null ? allowedOriginRules : Set.from(["*"]);
     assert(!this.allowedOriginRules.contains(""),
         "allowedOriginRules cannot contain empty strings");
     this._channel = MethodChannel(
-        'com.pichillilorenzo/flutter_inappwebview_web_message_listener_$jsObjectName');
-    this._channel.setMethodCallHandler(handleMethod);
+        'com.pichillilorenzo/flutter_inappwebview_web_message_listener_${id}_$jsObjectName');
+    this._channel.setMethodCallHandler((call) async {
+      try {
+        return await _handleMethod(call);
+      } on Error catch (e) {
+        print(e);
+        print(e.stackTrace);
+      }
+    });
   }
 
-  Future<dynamic> handleMethod(MethodCall call) async {
+  Future<dynamic> _handleMethod(MethodCall call) async {
     switch (call.method) {
       case "onPostMessage":
         if (_replyProxy == null) {
@@ -47,8 +65,8 @@ class WebMessageListener {
         }
         if (onPostMessage != null) {
           String? message = call.arguments["message"];
-          Uri? sourceOrigin = call.arguments["sourceOrigin"] != null
-              ? Uri.parse(call.arguments["sourceOrigin"])
+          WebUri? sourceOrigin = call.arguments["sourceOrigin"] != null
+              ? WebUri(call.arguments["sourceOrigin"])
               : null;
           bool isMainFrame = call.arguments["isMainFrame"];
           onPostMessage!(message, sourceOrigin, isMainFrame, _replyProxy!);
@@ -62,6 +80,7 @@ class WebMessageListener {
 
   Map<String, dynamic> toMap() {
     return {
+      "id": id,
       "jsObjectName": jsObjectName,
       "allowedOriginRules": allowedOriginRules.toList(),
     };
@@ -73,7 +92,7 @@ class WebMessageListener {
 
   @override
   String toString() {
-    return toMap().toString();
+    return 'WebMessageListener{id: $id, jsObjectName: $jsObjectName, allowedOriginRules: $allowedOriginRules}';
   }
 }
 

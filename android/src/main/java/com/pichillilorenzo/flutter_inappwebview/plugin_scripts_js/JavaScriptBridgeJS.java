@@ -11,7 +11,8 @@ public class JavaScriptBridgeJS {
           JavaScriptBridgeJS.JAVASCRIPT_BRIDGE_JS_SOURCE,
           UserScriptInjectionTime.AT_DOCUMENT_START,
           null,
-          true
+          true,
+          null
   );
 
   public static final String JAVASCRIPT_UTIL_VAR_NAME = "window." + JAVASCRIPT_BRIDGE_NAME + "._Util";
@@ -147,7 +148,8 @@ public class JavaScriptBridgeJS {
           "        });" +
           "    }," +
           "    arrayBufferToString: function(arrayBuffer) {" +
-          "        return String.fromCharCode.apply(String, arrayBuffer);" +
+          "        var uint8Array = new Uint8Array(arrayBuffer);" +
+          "        return uint8Array.reduce(function(acc, i) { return acc += String.fromCharCode.apply(null, [i]); }, '');" +
           "    }," +
           "    isBodyFormData: function(bodyString) {" +
           "        return bodyString.indexOf('------WebKitFormBoundary') >= 0;" +
@@ -218,7 +220,7 @@ public class JavaScriptBridgeJS {
           "      var _callHandlerID = setTimeout(function(){});" +
           "      window." + JAVASCRIPT_BRIDGE_NAME + "._callHandler(arguments[0], _callHandlerID, JSON.stringify(Array.prototype.slice.call(arguments, 1)));" +
           "      return new Promise(function(resolve, reject) {" +
-          "        window." + JAVASCRIPT_BRIDGE_NAME + "[_callHandlerID] = resolve;" +
+          "        window." + JAVASCRIPT_BRIDGE_NAME + "[_callHandlerID] = {resolve: resolve, reject: reject};" +
           "      });" +
           "    };" +
           "  }"+
@@ -228,7 +230,7 @@ public class JavaScriptBridgeJS {
           "    var _callHandlerID = setTimeout(function(){});" +
           "    window.top." + JAVASCRIPT_BRIDGE_NAME + "._callHandler(arguments[0], _callHandlerID, JSON.stringify(Array.prototype.slice.call(arguments, 1)));" +
           "    return new Promise(function(resolve, reject) {" +
-          "      window.top." + JAVASCRIPT_BRIDGE_NAME + "[_callHandlerID] = resolve;" +
+          "      window.top." + JAVASCRIPT_BRIDGE_NAME + "[_callHandlerID] = {resolve: resolve, reject: reject};" +
           "    });" +
           "  };" +
           "}" +

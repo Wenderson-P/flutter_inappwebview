@@ -6,19 +6,51 @@ import 'package:flutter/services.dart' show rootBundle;
 
 import 'mime_type_resolver.dart';
 
-///This class allows you to create a simple server on `http://localhost:[port]/` in order to be able to load your assets file on a server. The default [port] value is `8080`.
+///This class allows you to create a simple server on `http://localhost:[port]/`
+///in order to be able to load your assets file on a local server.
+///The default `port` value is `8080`.
+///
+///**Supported Platforms/Implementations**:
+///- Android native WebView
+///- iOS
+///- MacOS
 class InAppLocalhostServer {
   bool _started = false;
   HttpServer? _server;
   int _port = 8080;
+  bool _shared = false;
+  String _directoryIndex = 'index.html';
+  String _documentRoot = './';
 
-  InAppLocalhostServer({int port = 8080}) {
+  ///- [port] represents the port of the server. The default value is `8080`.
+  ///
+  ///- [directoryIndex] represents the index file to use. The default value is `index.html`.
+  ///
+  ///- [documentRoot] represents the document root path to serve. The default value is `./`.
+  ///
+  ///- The optional argument [shared] specifies whether additional `HttpServer`
+  /// objects can bind to the same combination of `address`, `port` and `v6Only`.
+  /// If `shared` is `true` and more `HttpServer`s from this isolate or other
+  /// isolates are bound to the port, then the incoming connections will be
+  /// distributed among all the bound `HttpServer`s. Connections can be
+  /// distributed over multiple isolates this way.
+  InAppLocalhostServer({
+    int port = 8080,
+    String directoryIndex = 'index.html',
+    String documentRoot = './',
+    bool shared = false,
+  }) {
     this._port = port;
+    this._directoryIndex = directoryIndex;
+    this._documentRoot =
+        (documentRoot.endsWith('/')) ? documentRoot : '$documentRoot/';
+    this._shared = shared;
   }
 
   ///Starts the server on `http://localhost:[port]/`.
   ///
-  ///**NOTE for iOS**: For the iOS Platform, you need to add the `NSAllowsLocalNetworking` key with `true` in the `Info.plist` file (See [ATS Configuration Basics](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CocoaKeys.html#//apple_ref/doc/uid/TP40009251-SW35)):
+  ///**NOTE for iOS**: For the iOS Platform, you need to add the `NSAllowsLocalNetworking` key with `true` in the `Info.plist` file
+  ///(See [ATS Configuration Basics](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CocoaKeys.html#//apple_ref/doc/uid/TP40009251-SW35)):
   ///```xml
   ///<key>NSAppTransportSecurity</key>
   ///<dict>
@@ -36,7 +68,7 @@ class InAppLocalhostServer {
     var completer = Completer();
 
     runZonedGuarded(() {
-      HttpServer.bind('127.0.0.1', _port).then((server) {
+      HttpServer.bind('127.0.0.1', _port, shared: _shared).then((server) {
         print('Server running on http://localhost:' + _port.toString());
 
         this._server = server;
@@ -46,7 +78,12 @@ class InAppLocalhostServer {
 
           var path = request.requestedUri.path;
           path = (path.startsWith('/')) ? path.substring(1) : path;
-          path += (path.endsWith('/')) ? 'index.html' : '';
+          path += (path.endsWith('/')) ? _directoryIndex : '';
+          if (path == '') {
+            // if the path still empty, try to load the index file
+            path = _directoryIndex;
+          }
+          path = _documentRoot + path;
 
           try {
             body = (await rootBundle.load(path)).buffer.asUint8List();

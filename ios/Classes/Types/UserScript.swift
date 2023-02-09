@@ -10,17 +10,17 @@ import WebKit
 
 public class UserScript : WKUserScript {
     var groupName: String?
-   
-    private var _contentWorld: Any? = nil
 
+    private var contentWorldWrapper: Any?
     @available(iOS 14.0, *)
     var contentWorld: WKContentWorld {
-        get {
-            return (_contentWorld as? WKContentWorld) ?? WKContentWorld.page
+      get {
+        if let value = contentWorldWrapper as? WKContentWorld {
+          return value
         }
-        set {
-            _contentWorld = newValue
-        }
+        return .page
+      }
+      set { contentWorldWrapper = newValue }
     }
     
     public override init(source: String, injectionTime: WKUserScriptInjectionTime, forMainFrameOnly: Bool) {
@@ -57,7 +57,7 @@ public class UserScript : WKUserScript {
                 groupName: map["groupName"] as? String,
                 source: map["source"] as! String,
                 injectionTime: WKUserScriptInjectionTime.init(rawValue: map["injectionTime"] as! Int) ?? .atDocumentStart,
-                forMainFrameOnly: map["iosForMainFrameOnly"] as! Bool,
+                forMainFrameOnly: map["forMainFrameOnly"] as! Bool,
                 in: contentWorld
             )
         }
@@ -65,7 +65,7 @@ public class UserScript : WKUserScript {
             groupName: map["groupName"] as? String,
             source: map["source"] as! String,
             injectionTime: WKUserScriptInjectionTime.init(rawValue: map["injectionTime"] as! Int) ?? .atDocumentStart,
-            forMainFrameOnly: map["iosForMainFrameOnly"] as! Bool
+            forMainFrameOnly: map["forMainFrameOnly"] as! Bool
         )
     }
 }

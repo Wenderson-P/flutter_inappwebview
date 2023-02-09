@@ -13,7 +13,7 @@ publish_to: none
 
 environment:
   sdk: ">=2.14.0 <3.0.0"
-  flutter: ">=2.5.0"
+  flutter: ">=3.0.0"
 
 dependencies:
   flutter:
@@ -22,10 +22,11 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.4
-  flutter_downloader: ^1.7.3
-  path_provider: ^2.0.9
-  permission_handler: ^9.2.0
-  url_launcher: ^6.0.20
+  flutter_downloader: 1.7.3
+  path_provider: 2.0.9
+  permission_handler: 10.0.2
+  url_launcher: 6.1.6
+  pointer_interceptor: ^0.9.3+3
   # connectivity: ^0.4.5+6
   flutter_inappwebview:
     path: ../
@@ -42,7 +43,7 @@ dev_dependencies:
 #    git:
 #      url: https://github.com/flutter/plugins.git
 #      path: packages/integration_test
-  pedantic: ^1.8.0
+  flutter_lints: ^2.0.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://www.dartlang.org/tools/pub/pubspec
@@ -56,29 +57,14 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/index.html
-    - assets/page-1.html
-    - assets/page-2.html
+    - assets/
     - assets/js/
     - assets/css/
     - assets/images/
-    - assets/favicon.ico
-    - assets/sample_audio.ogg
-    - assets/sample_video.mp4
-    - test_assets/certificate.pfx
-    - test_assets/in_app_webview_initial_file_test.html
-    - test_assets/in_app_webview_on_load_resource_test.html
-    - test_assets/in_app_webview_javascript_handler_test.html
-    - test_assets/in_app_webview_on_load_resource_custom_scheme_test.html
-    - test_assets/in_app_webview_on_console_message_test.html
-    - test_assets/in_app_webview_on_create_window_test.html
-    - test_assets/in_app_webview_on_js_dialog_test.html
+    - test_assets/
     - test_assets/js/
     - test_assets/css/
     - test_assets/images/
-    - test_assets/favicon.ico
-    - test_assets/sample_audio.ogg
-    - test_assets/sample_video.mp4
 
   # To add assets to your application, add an assets section, like this:
   # assets:
